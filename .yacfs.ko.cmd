@@ -1,0 +1,1 @@
+savedcmd_yacfs.ko := ld -r -m elf_x86_64 -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T /usr/lib/modules/7.0.10-zen1-1-zen/build/scripts/module.lds -o yacfs.ko yacfs.o yacfs.mod.o .module-common.o

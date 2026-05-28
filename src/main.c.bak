@@ -194,42 +194,14 @@ int yacfs_fill_inode(struct inode *inode, struct yacfs_inode_disk *disk)
     return 0;
 }
 
-/* Deferred pool I/O — reads the root inode from disk.
- * Called on first access, not during mount. Prevents deadlocks. */
-int yacfs_load_root(struct super_block *sb)
-{
-    struct yacfs_sb_info *sbi = sb->s_fs_info;
-    struct inode *root;
-    struct yacfs_inode_disk disk;
-
-    if (sbi->root_loaded)
-        return 0;
-
-    if (yacfs_read_ino(sb, YACFS_ROOT_INO, &disk)) {
-        pr_warn("YAcFS: cannot read root inode from pool %s\n", sbi->pool_path);
-        return -EIO;
-    }
-
-    root = new_inode(sb);
-    if (!root)
-        return -ENOMEM;
-
-    yacfs_fill_inode(root, &disk);
-    sbi->root_loaded = 1;
-
-    sb->s_root = d_make_root(root);
-    if (!sb->s_root)
-        return -ENOMEM;
-
-    return 0;
-}
-
 static int yacfs_get_tree(struct fs_context *fc)
 {
     struct yacfs_fs_context *ctx = fc->fs_private;
     struct super_block *sb;
     struct yacfs_sb_info *sbi;
     struct inode *root;
+    struct yacfs_inode_disk disk;
+    int ret;
 
     if (!ctx->pool_path) {
         errorf(fc, "YAcFS requires pool= option");
@@ -248,14 +220,20 @@ static int yacfs_get_tree(struct fs_context *fc)
 
     strncpy(sbi->pool_path, ctx->pool_path, sizeof(sbi->pool_path) - 1);
     sbi->pool_path[sizeof(sbi->pool_path) - 1] = '\0';
-    sbi->root_loaded = 0;
     sb->s_fs_info = sbi;
     sb->s_op = &yacfs_super_ops;
     sb->s_magic = YACFS_SUPER_MAGIC;
     sb->s_blocksize = PAGE_SIZE;
     sb->s_blocksize_bits = PAGE_SHIFT;
 
-    /* Create minimal root for mount — actual pool data loaded on first access */
+    ret = yacfs_read_ino(sb, YACFS_ROOT_INO, &disk);
+    if (ret) {
+        kfree(sbi);
+        sb->s_fs_info = NULL;
+        deactivate_locked_super(sb);
+        return ret;
+    }
+
     root = new_inode(sb);
     if (!root) {
         kfree(sbi);
@@ -263,15 +241,8 @@ static int yacfs_get_tree(struct fs_context *fc)
         deactivate_locked_super(sb);
         return -ENOMEM;
     }
-    root->i_ino = YACFS_ROOT_INO;
-    root->i_mode = S_IFDIR | 0555;
-    root->i_uid = GLOBAL_ROOT_UID;
-    root->i_gid = GLOBAL_ROOT_GID;
-    inode_set_ctime_current(root);
-    inode_set_atime_to_ts(root, current_time(root));
-    inode_set_mtime_to_ts(root, current_time(root));
-    root->i_op = &yacfs_dir_inode_ops;
-    root->i_fop = &yacfs_dir_ops;
+
+    yacfs_fill_inode(root, &disk);
 
     sb->s_root = d_make_root(root);
     if (!sb->s_root) {
