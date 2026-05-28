@@ -1,0 +1,11 @@
+image: archlinux:latest
+stages:
+  - build
+build:
+  stage: build
+  script:
+    - pacman -Syu --noconfirm linux-headers base-devel
+    - make KDIR=/lib/modules/$(ls /lib/modules | head -1)/build
+  artifacts:
+    paths:
+      - yacfs.ko
